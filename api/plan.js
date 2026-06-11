@@ -1,6 +1,8 @@
+import { createRequire } from 'module'
+const require = createRequire(import.meta.url)
 const { generateDayPlan } = require('../backend/planner')
 
-module.exports = (req, res) => {
+export default (req, res) => {
   if (req.method !== 'POST') return res.status(405).end()
   const { target, mealsPerDay, gymTime, wakeTime, bedTime, dayIndex = 0 } = req.body
   if (!target) return res.status(400).json({ error: 'target required' })

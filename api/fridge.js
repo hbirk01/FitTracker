@@ -1,6 +1,6 @@
-const Anthropic = require('@anthropic-ai/sdk')
+import Anthropic from '@anthropic-ai/sdk'
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   if (req.method !== 'POST') return res.status(405).end()
   const { ingredients, target } = req.body
   if (!ingredients) return res.status(400).json({ error: 'ingredients required' })
