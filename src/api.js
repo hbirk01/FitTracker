@@ -13,7 +13,8 @@ async function get(path) {
 }
 
 export const getFoods = (category) => get(`/foods${category ? `?category=${category}` : ''}`)
+export const getRecipes = (mealType) => get(`/recipes${mealType ? `?mealType=${encodeURIComponent(mealType)}` : ''}`)
+export const scaleMeal = (recipeId, targetKcal) => post('/meal', { recipeId, targetKcal })
 export const generatePlan = (opts) => post('/plan', opts)
-export const swapItem = (opts) => post('/plan/swap', opts)
 export const getShoppingList = (opts) => post('/shopping', opts)
 export const getFridgeMeals = (ingredients, target) => post('/fridge', { ingredients, target })

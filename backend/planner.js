@@ -51,13 +51,29 @@ const MEAL_TEMPLATES = {
   ],
 }
 
+const PROTEIN_POWDER_DAILY_CAP = 60 // 2 scoops max per day
+
 function generateDayPlan({ target, mealsPerDay = 5, gymTime = '18:00', wakeTime = '07:00', bedTime = '23:00', dayIndex = 0 }) {
   const templates = MEAL_TEMPLATES[mealsPerDay] || MEAL_TEMPLATES[5]
+  let ppUsed = 0 // track grams of protein_powder used today
+
   return templates.map((tmpl, mealIdx) => {
     const mealKcal = Math.round(target * tmpl.pct)
     const time = tmpl.timeFn(gymTime, wakeTime, bedTime)
-    const recipe = pickRecipe(tmpl.name, dayIndex, mealIdx)
-    const scaled = scaleRecipe(recipe, mealKcal)
+
+    // If we've already hit the daily cap, pick a recipe without protein powder
+    const excludeIngredients = ppUsed >= PROTEIN_POWDER_DAILY_CAP ? ['protein_powder'] : []
+    const recipe = pickRecipe(tmpl.name, dayIndex, mealIdx, excludeIngredients)
+
+    // Cap protein_powder to whatever budget remains
+    const ppRemaining = Math.max(0, PROTEIN_POWDER_DAILY_CAP - ppUsed)
+    const maxGrams = { protein_powder: ppRemaining }
+    const scaled = scaleRecipe(recipe, mealKcal, maxGrams)
+
+    // Accumulate protein_powder used
+    const ppIngredient = scaled?.ingredients?.find(i => i.foodId === 'protein_powder')
+    if (ppIngredient) ppUsed += ppIngredient.grams
+
     return {
       id: `${dayIndex}-${mealIdx}`,
       done: false,

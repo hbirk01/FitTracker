@@ -1,21 +1,34 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, Check, ChevronDown, ChevronUp, Bell, BellOff } from 'lucide-react'
-import { generatePlan } from '../api'
+import { RefreshCw, Check, ChevronDown, ChevronUp, Bell, ArrowLeftRight, Loader2 } from 'lucide-react'
+import { generatePlan, getRecipes, scaleMeal } from '../api'
 import { getProfile, calcTarget, calcProteinTarget } from '../store'
 import { useNotifications } from '../hooks/useNotifications'
 
-const PLAN_KEY = 'ft_today_plan_v2'
-const PLAN_DATE_KEY = 'ft_plan_date_v2'
+const PLAN_KEY = 'ft_today_plan_v3'
+const PLAN_DATE_KEY = 'ft_plan_date_v3'
+
+const PORTION_OPTIONS = [
+  { label: '½×', value: 0.5 },
+  { label: '¾×', value: 0.75 },
+  { label: '1×',  value: 1 },
+  { label: '1¼×', value: 1.25 },
+  { label: '1½×', value: 1.5 },
+]
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 function loadPlan() { try { return JSON.parse(localStorage.getItem(PLAN_KEY)) } catch { return null } }
 function savePlan(p) { localStorage.setItem(PLAN_KEY, JSON.stringify(p)); localStorage.setItem(PLAN_DATE_KEY, todayStr()) }
 function isStale() { return localStorage.getItem(PLAN_DATE_KEY) !== todayStr() }
 
+function scaled(val, portion) { return Math.round(val * portion * 10) / 10 }
+
 export default function TodayPlan() {
-  const [plan, setPlan] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState(null)
+  const [plan, setPlan]           = useState(null)
+  const [loading, setLoading]     = useState(false)
+  const [expanded, setExpanded]   = useState(null)
+  const [swapOpen, setSwapOpen]   = useState(null)   // mealIdx with swap panel open
+  const [swapping, setSwapping]   = useState(null)   // recipeId being swapped in
+  const [allRecipes, setAllRecipes] = useState([])
   const [notifPerm, setNotifPerm] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'denied'
   )
@@ -32,9 +45,14 @@ export default function TodayPlan() {
     fetchPlan()
   }, [])
 
+  useEffect(() => {
+    getRecipes().then(setAllRecipes).catch(() => {})
+  }, [])
+
   async function fetchPlan(dayOffset = 0) {
     setLoading(true)
     setExpanded(null)
+    setSwapOpen(null)
     try {
       const data = await generatePlan({
         target,
@@ -44,8 +62,10 @@ export default function TodayPlan() {
         bedTime: profile.bedTime || '23:00',
         dayIndex: dayOffset,
       })
-      setPlan(data)
-      savePlan(data)
+      // Ensure portionScale defaults
+      const withDefaults = data.map(m => ({ ...m, portionScale: 1 }))
+      setPlan(withDefaults)
+      savePlan(withDefaults)
     } catch (e) {
       console.error('Plan fetch failed:', e)
     } finally {
@@ -53,10 +73,31 @@ export default function TodayPlan() {
     }
   }
 
+  function updatePlan(updated) { setPlan(updated); savePlan(updated) }
+
   function toggleDone(mealIdx) {
-    const updated = plan.map((m, i) => i === mealIdx ? { ...m, done: !m.done } : m)
-    setPlan(updated)
-    savePlan(updated)
+    updatePlan(plan.map((m, i) => i === mealIdx ? { ...m, done: !m.done } : m))
+  }
+
+  function setPortion(mealIdx, value) {
+    updatePlan(plan.map((m, i) => i === mealIdx ? { ...m, portionScale: value } : m))
+  }
+
+  async function swapRecipe(mealIdx, recipeId) {
+    setSwapping(recipeId)
+    try {
+      const meal = plan[mealIdx]
+      const newRecipe = await scaleMeal(recipeId, meal.targetKcal)
+      updatePlan(plan.map((m, i) => i === mealIdx
+        ? { ...m, recipe: newRecipe, portionScale: 1, done: false }
+        : m
+      ))
+      setSwapOpen(null)
+    } catch (e) {
+      console.error('Swap failed:', e)
+    } finally {
+      setSwapping(null)
+    }
   }
 
   async function requestNotifications() {
@@ -64,8 +105,12 @@ export default function TodayPlan() {
     setNotifPerm(perm)
   }
 
-  const consumed = plan ? plan.filter(m => m.done).reduce((s, m) => s + m.recipe.actualKcal, 0) : 0
-  const proteinConsumed = plan ? plan.filter(m => m.done).reduce((s, m) => s + m.recipe.protein, 0) : 0
+  const consumed = plan
+    ? plan.filter(m => m.done).reduce((s, m) => s + scaled(m.recipe.actualKcal, m.portionScale || 1), 0)
+    : 0
+  const proteinConsumed = plan
+    ? plan.filter(m => m.done).reduce((s, m) => s + scaled(m.recipe.protein, m.portionScale || 1), 0)
+    : 0
   const pct = plan ? Math.min(consumed / target, 1) : 0
   const proteinPct = Math.min(proteinConsumed / proteinTarget.min, 1)
 
@@ -83,25 +128,18 @@ export default function TodayPlan() {
 
       {/* Progress summary */}
       <div className="bg-zinc-800 rounded-2xl p-4 space-y-3">
-        {/* Calories */}
         <div>
           <div className="flex justify-between text-sm mb-1.5">
             <span className="text-gray-400">Calories</span>
             <span className="text-white font-semibold">
-              {consumed.toLocaleString()} <span className="text-gray-500 font-normal">/ {target.toLocaleString()} kcal</span>
+              {Math.round(consumed).toLocaleString()} <span className="text-gray-500 font-normal">/ {target.toLocaleString()} kcal</span>
             </span>
           </div>
           <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${pct * 100}%`,
-                background: pct >= 1 ? '#ef4444' : 'linear-gradient(90deg, #22c55e, #4ade80)',
-              }}
-            />
+            <div className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${pct * 100}%`, background: pct >= 1 ? '#ef4444' : 'linear-gradient(90deg, #22c55e, #4ade80)' }} />
           </div>
         </div>
-        {/* Protein */}
         <div>
           <div className="flex justify-between text-sm mb-1.5">
             <span className="text-gray-400">Protein</span>
@@ -111,27 +149,20 @@ export default function TodayPlan() {
             </span>
           </div>
           <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${proteinPct * 100}%`,
-                background: proteinPct >= 1 ? '#60a5fa' : 'linear-gradient(90deg, #3b82f6, #60a5fa)',
-              }}
-            />
+            <div className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${proteinPct * 100}%`, background: proteinPct >= 1 ? '#60a5fa' : 'linear-gradient(90deg, #3b82f6, #60a5fa)' }} />
           </div>
         </div>
         <div className="flex justify-between text-xs text-gray-600 pt-0.5">
           <span>{plan.filter(m => m.done).length} of {plan.length} meals done</span>
-          <span>{Math.max(0, target - consumed).toLocaleString()} kcal left</span>
+          <span>{Math.max(0, Math.round(target - consumed)).toLocaleString()} kcal left</span>
         </div>
       </div>
 
       {/* Notification banner */}
       {notifPerm !== 'granted' && 'Notification' in window && (
-        <button
-          onClick={requestNotifications}
-          className="w-full flex items-center gap-3 bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3 text-left"
-        >
+        <button onClick={requestNotifications}
+          className="w-full flex items-center gap-3 bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3 text-left">
           <Bell size={18} className="text-yellow-400 flex-shrink-0" />
           <div className="flex-1">
             <p className="text-sm text-white font-medium">Enable meal reminders</p>
@@ -141,71 +172,111 @@ export default function TodayPlan() {
         </button>
       )}
 
-      {notifPerm === 'granted' && (
-        <div className="flex items-center gap-2 px-1">
-          <Bell size={13} className="text-green-500" />
-          <span className="text-xs text-gray-600">Meal reminders are on — you'll get notified 15 min before each meal</span>
-        </div>
-      )}
-
       {/* Meal cards */}
       {plan.map((meal, mealIdx) => {
         const r = meal.recipe
+        const portion = meal.portionScale || 1
         const isOpen = expanded === mealIdx
+        const isSwapOpen = swapOpen === mealIdx
+
+        const displayKcal    = Math.round(r.actualKcal * portion)
+        const displayProtein = scaled(r.protein, portion)
+        const displayCarbs   = scaled(r.carbs, portion)
+        const displayFat     = scaled(r.fat, portion)
+
+        // Recipes available to swap into this slot
+        const swapOptions = allRecipes.filter(
+          rec => rec.mealTypes.includes(meal.name) && rec.id !== r.recipeId
+        )
 
         return (
-          <div
-            key={meal.id}
-            className={`rounded-2xl overflow-hidden transition-opacity ${meal.done ? 'opacity-55' : ''}`}
-          >
+          <div key={meal.id} className={`rounded-2xl overflow-hidden transition-opacity ${meal.done ? 'opacity-55' : ''}`}>
             <div className="bg-zinc-800">
+
               {/* Header row */}
               <div className="flex items-center gap-3 px-4 py-3.5">
-                {/* Check circle */}
-                <div
-                  onClick={() => toggleDone(mealIdx)}
+                <div onClick={() => toggleDone(mealIdx)}
                   className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition-colors ${
                     meal.done ? 'bg-green-500 border-green-500' : 'border-zinc-600 active:border-green-400'
-                  }`}
-                >
+                  }`}>
                   {meal.done && <Check size={13} className="text-white" />}
                 </div>
 
-                {/* Meal info — tappable to expand */}
-                <button
-                  onClick={() => setExpanded(isOpen ? null : mealIdx)}
-                  className="flex-1 text-left min-w-0"
-                >
+                <button onClick={() => { setExpanded(isOpen ? null : mealIdx); setSwapOpen(null) }}
+                  className="flex-1 text-left min-w-0">
                   <div className="flex items-baseline gap-2">
                     <span className="text-base">{r.emoji}</span>
                     <p className={`text-sm font-semibold ${meal.done ? 'line-through text-gray-500' : 'text-white'}`}>
                       {r.name}
                     </p>
+                    {portion !== 1 && (
+                      <span className="text-xs text-amber-400 font-medium">{portion}×</span>
+                    )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {meal.name} · {meal.time}
-                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">{meal.name} · {meal.time}</p>
                 </button>
 
-                {/* Kcal + chevron */}
-                <button
-                  onClick={() => setExpanded(isOpen ? null : mealIdx)}
-                  className="flex items-center gap-1.5 flex-shrink-0"
-                >
+                {/* Swap button */}
+                <button onClick={() => { setSwapOpen(isSwapOpen ? null : mealIdx); setExpanded(null) }}
+                  className={`p-1.5 transition-colors ${isSwapOpen ? 'text-green-400' : 'text-zinc-600'}`}>
+                  <ArrowLeftRight size={14} />
+                </button>
+
+                <button onClick={() => { setExpanded(isOpen ? null : mealIdx); setSwapOpen(null) }}
+                  className="flex items-center gap-1.5 flex-shrink-0">
                   <div className="text-right">
-                    <p className="text-green-400 font-bold text-sm">{r.actualKcal} kcal</p>
-                    <p className="text-xs text-gray-600">{r.protein}g protein</p>
+                    <p className="text-green-400 font-bold text-sm">{displayKcal} kcal</p>
+                    <p className="text-xs text-gray-600">{displayProtein}g protein</p>
                   </div>
-                  {isOpen
-                    ? <ChevronUp size={14} className="text-gray-600" />
-                    : <ChevronDown size={14} className="text-gray-600" />
-                  }
+                  {isOpen ? <ChevronUp size={14} className="text-gray-600" /> : <ChevronDown size={14} className="text-gray-600" />}
                 </button>
               </div>
+
+              {/* Swap panel */}
+              {isSwapOpen && (
+                <div className="border-t border-zinc-700 px-4 pt-3 pb-4">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-2.5">Swap this meal</p>
+                  {swapOptions.length === 0
+                    ? <p className="text-xs text-gray-600">No alternatives for this slot</p>
+                    : (
+                      <div className="space-y-2">
+                        {swapOptions.map(rec => (
+                          <button key={rec.id} onClick={() => swapRecipe(mealIdx, rec.id)} disabled={!!swapping}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-zinc-700 bg-zinc-900 text-left active:border-green-500 transition-colors">
+                            <span className="text-xl flex-shrink-0">{rec.emoji}</span>
+                            <span className="text-sm text-white flex-1">{rec.name}</span>
+                            {swapping === rec.id
+                              ? <Loader2 size={14} className="text-green-400 animate-spin flex-shrink-0" />
+                              : <ArrowLeftRight size={13} className="text-zinc-600 flex-shrink-0" />
+                            }
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  }
+                </div>
+              )}
 
               {/* Expanded recipe detail */}
               {isOpen && (
                 <div className="border-t border-zinc-700 px-4 pt-3 pb-4 space-y-4">
+
+                  {/* Portion controls */}
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Portion</p>
+                    <div className="flex gap-2">
+                      {PORTION_OPTIONS.map(opt => (
+                        <button key={opt.value} onClick={() => setPortion(mealIdx, opt.value)}
+                          className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                            portion === opt.value
+                              ? 'bg-green-600 text-white'
+                              : 'bg-zinc-900 text-gray-400 active:bg-zinc-700'
+                          }`}>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
                   {/* Ingredients */}
                   <div>
@@ -215,16 +286,14 @@ export default function TodayPlan() {
                         <div key={j} className="flex items-center justify-between bg-zinc-900 rounded-xl px-3 py-2">
                           <div className="flex items-center gap-2.5">
                             <span className="text-lg">{ing.emoji}</span>
-                            <div>
-                              <p className="text-sm text-white">
-                                <span className="font-semibold">{ing.grams}g</span>
-                                <span className="text-gray-400 ml-1">{ing.name}</span>
-                              </p>
-                            </div>
+                            <p className="text-sm text-white">
+                              <span className="font-semibold">{Math.round(ing.grams * portion)}g</span>
+                              <span className="text-gray-400 ml-1">{ing.name}</span>
+                            </p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xs text-gray-500">{ing.kcal} kcal</p>
-                            <p className="text-xs text-gray-700">{ing.protein}g pro</p>
+                            <p className="text-xs text-gray-500">{Math.round(ing.kcal * portion)} kcal</p>
+                            <p className="text-xs text-gray-700">{scaled(ing.protein, portion)}g pro</p>
                           </div>
                         </div>
                       ))}
@@ -237,12 +306,12 @@ export default function TodayPlan() {
                     <p className="text-sm text-gray-300 leading-relaxed">{r.instructions}</p>
                   </div>
 
-                  {/* Macros summary */}
+                  {/* Macros */}
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { label: 'Protein', val: r.protein + 'g', color: 'text-blue-400' },
-                      { label: 'Carbs',   val: r.carbs   + 'g', color: 'text-yellow-400' },
-                      { label: 'Fat',     val: r.fat     + 'g', color: 'text-orange-400' },
+                      { label: 'Protein', val: displayProtein + 'g', color: 'text-blue-400' },
+                      { label: 'Carbs',   val: displayCarbs   + 'g', color: 'text-yellow-400' },
+                      { label: 'Fat',     val: displayFat     + 'g', color: 'text-orange-400' },
                     ].map(m => (
                       <div key={m.label} className="bg-zinc-900 rounded-xl py-2 text-center">
                         <p className={`text-sm font-bold ${m.color}`}>{m.val}</p>
@@ -251,14 +320,10 @@ export default function TodayPlan() {
                     ))}
                   </div>
 
-                  <button
-                    onClick={() => { toggleDone(mealIdx); setExpanded(null) }}
+                  <button onClick={() => { toggleDone(mealIdx); setExpanded(null) }}
                     className={`w-full rounded-xl py-3 text-sm font-semibold flex items-center justify-center gap-2 transition-colors ${
-                      meal.done
-                        ? 'bg-zinc-700 text-gray-400'
-                        : 'bg-green-600 text-white active:bg-green-700'
-                    }`}
-                  >
+                      meal.done ? 'bg-zinc-700 text-gray-400' : 'bg-green-600 text-white active:bg-green-700'
+                    }`}>
                     <Check size={14} />
                     {meal.done ? 'Mark as not eaten' : 'Mark as eaten'}
                   </button>
@@ -269,11 +334,9 @@ export default function TodayPlan() {
         )
       })}
 
-      {/* Regenerate */}
-      <button
-        onClick={() => fetchPlan(Math.floor(Math.random() * 7))}
-        className="w-full border border-dashed border-zinc-700 text-gray-500 text-sm py-3 rounded-2xl flex items-center justify-center gap-2 active:border-green-500 active:text-green-400"
-      >
+      {/* Shuffle */}
+      <button onClick={() => fetchPlan(Math.floor(Math.random() * 7))}
+        className="w-full border border-dashed border-zinc-700 text-gray-500 text-sm py-3 rounded-2xl flex items-center justify-center gap-2 active:border-green-500 active:text-green-400">
         <RefreshCw size={14} /> Shuffle today&apos;s recipes
       </button>
     </div>

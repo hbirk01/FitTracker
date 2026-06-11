@@ -197,14 +197,34 @@ function baseKcal(recipe) {
   }, 0)
 }
 
-// Scale a recipe to a target calorie count
-function scaleRecipe(recipe, targetKcal) {
+// Scale a recipe to a target calorie count.
+// maxGrams: optional { [ingredientId]: maxGrams } — caps an ingredient and
+// redistributes the remaining calorie budget across uncapped ingredients.
+function scaleRecipe(recipe, targetKcal, maxGrams = {}) {
   const base = baseKcal(recipe)
   if (base === 0) return null
-  const scale = targetKcal / base
+  const initialScale = targetKcal / base
+
+  // Split into capped vs uncapped ingredients
+  let cappedKcal = 0
+  let uncappedBaseKcal = 0
+  recipe.base.forEach(item => {
+    const wouldBe = item.grams * initialScale
+    if (maxGrams[item.id] != null && wouldBe > maxGrams[item.id]) {
+      cappedKcal += nutrientsFor(item.id, maxGrams[item.id])?.kcal || 0
+    } else {
+      uncappedBaseKcal += nutrientsFor(item.id, item.grams)?.kcal || 0
+    }
+  })
+  const uncappedScale = uncappedBaseKcal > 0
+    ? (targetKcal - cappedKcal) / uncappedBaseKcal
+    : initialScale
 
   const ingredients = recipe.base.map(item => {
-    const grams = Math.round(item.grams * scale)
+    const wouldBe = item.grams * initialScale
+    const grams = (maxGrams[item.id] != null && wouldBe > maxGrams[item.id])
+      ? Math.round(maxGrams[item.id])
+      : Math.round(item.grams * uncappedScale)
     return nutrientsFor(item.id, grams)
   }).filter(Boolean)
 
@@ -226,10 +246,15 @@ function scaleRecipe(recipe, targetKcal) {
   }
 }
 
-// Pick best recipe for a meal slot, rotating by day
-function pickRecipe(mealType, dayIndex, mealIndex) {
-  const options = RECIPE_TEMPLATES.filter(r => r.mealTypes.includes(mealType))
+// Pick best recipe for a meal slot, rotating by day.
+// excludeIngredients: avoid recipes containing these ingredient IDs if alternatives exist.
+function pickRecipe(mealType, dayIndex, mealIndex, excludeIngredients = []) {
+  let options = RECIPE_TEMPLATES.filter(r => r.mealTypes.includes(mealType))
   if (options.length === 0) return RECIPE_TEMPLATES[0]
+  if (excludeIngredients.length > 0) {
+    const filtered = options.filter(r => !r.base.some(i => excludeIngredients.includes(i.id)))
+    if (filtered.length > 0) options = filtered
+  }
   return options[(dayIndex * 7 + mealIndex) % options.length]
 }
 
