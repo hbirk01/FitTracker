@@ -75,12 +75,35 @@ export default function TodayPlan() {
 
   function updatePlan(updated) { setPlan(updated); savePlan(updated) }
 
+  // After any done/portion change, spread remaining calorie budget across undone meals
+  function redistribute(updatedPlan) {
+    const consumed = updatedPlan
+      .filter(m => m.done)
+      .reduce((s, m) => s + m.recipe.actualKcal * (m.portionScale || 1), 0)
+    const remaining = Math.max(0, target - consumed)
+    const undone = updatedPlan.filter(m => !m.done)
+    const totalUndoneTarget = undone.reduce((s, m) => s + m.targetKcal, 0)
+    if (undone.length === 0 || totalUndoneTarget === 0) return updatedPlan
+    return updatedPlan.map(m => {
+      if (m.done) return m
+      const idealKcal = remaining * (m.targetKcal / totalUndoneTarget)
+      const newScale = idealKcal / m.recipe.actualKcal
+      // Round to nearest 0.05, clamp to sensible range
+      const clamped = Math.round(Math.max(0.25, Math.min(2.5, newScale)) * 20) / 20
+      return { ...m, portionScale: clamped }
+    })
+  }
+
   function toggleDone(mealIdx) {
-    updatePlan(plan.map((m, i) => i === mealIdx ? { ...m, done: !m.done } : m))
+    const next = plan.map((m, i) => i === mealIdx ? { ...m, done: !m.done } : m)
+    updatePlan(redistribute(next))
   }
 
   function setPortion(mealIdx, value) {
-    updatePlan(plan.map((m, i) => i === mealIdx ? { ...m, portionScale: value } : m))
+    // Changing portion on an undone meal just previews; on a done meal, redistributes
+    const next = plan.map((m, i) => i === mealIdx ? { ...m, portionScale: value } : m)
+    const meal = plan[mealIdx]
+    updatePlan(meal.done ? redistribute(next) : next)
   }
 
   async function swapRecipe(mealIdx, recipeId) {
