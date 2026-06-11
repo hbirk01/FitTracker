@@ -15,6 +15,13 @@ export const DEFAULT_PROFILE = {
   surplus: 300,
   mealsPerDay: 5,
   gymTime: '18:00',
+  wakeTime: '07:00',
+  bedTime: '23:00',
+}
+
+// Protein target: 1.6–2.2 g/kg/day (Morton et al. BJSM 2018, PMC5867436)
+export function calcProteinTarget(p) {
+  return { min: Math.round(p.weightKg * 1.6), max: Math.round(p.weightKg * 2.2) }
 }
 
 export function calcBMR(p) {

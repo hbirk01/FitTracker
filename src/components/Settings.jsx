@@ -3,11 +3,11 @@ import { Save, ChevronDown } from 'lucide-react'
 import { getProfile, saveProfile, calcBMR, calcTarget, savePlan } from '../store'
 
 const ACTIVITY_OPTIONS = [
-  { label: 'Sedentary', description: 'Little or no exercise', multiplier: 1.2 },
-  { label: 'Lightly active', description: '1–3 days/week', multiplier: 1.375 },
-  { label: 'Moderately active', description: '3–5 days/week', multiplier: 1.55 },
-  { label: 'Very active', description: '6–7 days/week', multiplier: 1.725 },
-  { label: 'Super active', description: 'Physical job + daily training', multiplier: 1.9 },
+  { label: 'Sedentary',         description: 'Desk job, little exercise',           multiplier: 1.2 },
+  { label: 'Lightly active',    description: '1–3 days/week light exercise',         multiplier: 1.375 },
+  { label: 'Moderately active', description: '3–5 days/week moderate training',      multiplier: 1.55 },
+  { label: 'Very active',       description: '6–7 days/week hard training',          multiplier: 1.725 },
+  { label: 'Super active',      description: 'Physical job + twice-daily training',  multiplier: 1.9 },
 ]
 
 const MEAL_TEMPLATES = {
@@ -151,6 +151,10 @@ export default function Settings({ onSave }) {
           </div>
         </Field>
 
+        <p className="text-xs text-gray-600 -mt-1 px-1">
+          These are estimates (±10–15% individual variation). Track your weight for 2–3 weeks and adjust your target by ±100 kcal if not trending as expected.
+        </p>
+
         <Field label={`Calorie surplus: +${p.surplus} kcal`}>
           <input type="range" min="0" max="600" step="50" value={p.surplus}
             onChange={e => set('surplus', +e.target.value)}
@@ -162,9 +166,21 @@ export default function Settings({ onSave }) {
       </Section>
 
       <Section title="Gym & Meal Schedule">
-        <Field label="Gym time (pre/post-workout meals adjust automatically)">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Wake up">
+            <input type="time" value={p.wakeTime || '07:00'} onChange={e => set('wakeTime', e.target.value)}
+              className="input" />
+          </Field>
+          <Field label="Bedtime">
+            <input type="time" value={p.bedTime || '23:00'} onChange={e => set('bedTime', e.target.value)}
+              className="input" />
+          </Field>
+        </div>
+
+        <Field label="Gym time">
           <input type="time" value={p.gymTime || '18:00'} onChange={e => set('gymTime', e.target.value)}
             className="input" />
+          <p className="text-xs text-gray-600 mt-1">Pre/post-workout meals adjust automatically around this time</p>
         </Field>
 
         <Field label={`Meals per day: ${p.mealsPerDay || 5}`}>

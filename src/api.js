@@ -1,30 +1,19 @@
-const USDA_KEY = 'DEMO_KEY' // replace with real key from https://fdc.nal.usda.gov/api-key-signup/
+const BASE = '/api'
 
-export async function searchFoods(query) {
-  const res = await fetch(
-    `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&pageSize=10&api_key=${USDA_KEY}`
-  )
-  if (!res.ok) throw new Error('Food search failed')
-  const data = await res.json()
-  return (data.foods || []).map(f => ({
-    fdcId: f.fdcId,
-    name: f.description,
-    brand: f.brandOwner || '',
-    calories: Math.round(
-      (f.foodNutrients?.find(n => n.nutrientId === 1008)?.value) || 0
-    ),
-    unit: '100g',
-  }))
+async function post(path, body) {
+  const r = await fetch(BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (!r.ok) throw new Error(await r.text())
+  return r.json()
 }
 
-// Fridge → meal suggestions via Claude (proxied through a simple backend)
-// For local dev, this calls a Vite dev proxy or a deployed serverless function
-export async function getFridgeMeals(ingredients, targetCalories) {
-  const res = await fetch('/api/fridge-meals', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ingredients, targetCalories }),
-  })
-  if (!res.ok) throw new Error('AI suggestion failed')
-  return res.json()
+async function get(path) {
+  const r = await fetch(BASE + path)
+  if (!r.ok) throw new Error(await r.text())
+  return r.json()
 }
+
+export const getFoods = (category) => get(`/foods${category ? `?category=${category}` : ''}`)
+export const generatePlan = (opts) => post('/plan', opts)
+export const swapItem = (opts) => post('/plan/swap', opts)
+export const getShoppingList = (opts) => post('/shopping', opts)
+export const getFridgeMeals = (ingredients, target) => post('/fridge', { ingredients, target })
